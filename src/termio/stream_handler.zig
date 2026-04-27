@@ -1105,6 +1105,7 @@ pub const StreamHandler = struct {
         // We do this last so failures are still processed correctly
         // above.
         try self.terminal.semanticPrompt(cmd);
+        try self.queueRender();
     }
 
     fn reportPwd(self: *StreamHandler, url: []const u8) !void {

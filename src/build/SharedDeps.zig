@@ -580,15 +580,18 @@ pub fn add(
         }
     }
 
-    // If we're building an exe then we have additional dependencies.
-    if (step.kind != .lib) {
-        // We always statically compile glad
+    // We always statically compile glad for OpenGL consumers, including
+    // libghostty, so embedders don't need to provide the loader symbols.
+    if (step.kind != .obj) {
         step.addIncludePath(b.path("vendor/glad/include/"));
         step.addCSourceFile(.{
             .file = b.path("vendor/glad/src/gl.c"),
             .flags = &.{},
         });
+    }
 
+    // If we're building an exe then we have additional dependencies.
+    if (step.kind != .lib) {
         // When we're targeting flatpak we ALWAYS link GTK so we
         // get access to glib for dbus.
         if (self.config.flatpak) step.linkSystemLibrary2("gtk4", dynamic_link_opts);

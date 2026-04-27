@@ -1076,6 +1076,7 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
                 .pwd,
                 .{ .pwd = str },
             );
+            try self.queueRender();
         },
 
         .close => self.close(),
@@ -1153,6 +1154,7 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
             ) catch |err| {
                 log.warn("apprt failed to notify command finish={}", .{err});
             };
+            try self.queueRender();
         },
 
         .search_total => |v| {

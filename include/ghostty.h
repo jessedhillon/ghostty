@@ -66,6 +66,7 @@ typedef enum {
   GHOSTTY_PLATFORM_INVALID,
   GHOSTTY_PLATFORM_MACOS,
   GHOSTTY_PLATFORM_IOS,
+  GHOSTTY_PLATFORM_LINUX,
 } ghostty_platform_e;
 
 typedef enum {
@@ -446,6 +447,9 @@ typedef struct {
   const char* value;
 } ghostty_env_var_s;
 
+typedef void (*ghostty_opengl_proc_t)(void);
+typedef ghostty_opengl_proc_t (*ghostty_opengl_loader_f)(const char*);
+
 typedef struct {
   void* nsview;
 } ghostty_platform_macos_s;
@@ -454,9 +458,14 @@ typedef struct {
   void* uiview;
 } ghostty_platform_ios_s;
 
+typedef struct {
+  void* gtk_widget;
+} ghostty_platform_linux_s;
+
 typedef union {
   ghostty_platform_macos_s macos;
   ghostty_platform_ios_s ios;
+  ghostty_platform_linux_s gtk;
 } ghostty_platform_u;
 
 typedef enum {
@@ -469,6 +478,7 @@ typedef struct {
   ghostty_platform_e platform_tag;
   ghostty_platform_u platform;
   void* userdata;
+  ghostty_opengl_loader_f opengl_loader;
   double scale_factor;
   float font_size;
   const char* working_directory;
@@ -1061,6 +1071,7 @@ typedef enum {
 // Published API
 
 GHOSTTY_API int ghostty_init(uintptr_t, char**);
+GHOSTTY_API const char* ghostty_last_error(void);
 GHOSTTY_API void ghostty_cli_try_action(void);
 GHOSTTY_API ghostty_info_s ghostty_info(void);
 GHOSTTY_API const char* ghostty_translate(const char*);
@@ -1110,6 +1121,9 @@ GHOSTTY_API bool ghostty_surface_needs_confirm_quit(ghostty_surface_t);
 GHOSTTY_API bool ghostty_surface_process_exited(ghostty_surface_t);
 GHOSTTY_API void ghostty_surface_refresh(ghostty_surface_t);
 GHOSTTY_API void ghostty_surface_draw(ghostty_surface_t);
+GHOSTTY_API void ghostty_surface_display_realized(ghostty_surface_t);
+GHOSTTY_API void ghostty_surface_init_opengl(ghostty_surface_t);
+GHOSTTY_API void ghostty_surface_draw_frame(ghostty_surface_t);
 GHOSTTY_API void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
 GHOSTTY_API void ghostty_surface_set_focus(ghostty_surface_t, bool);
 GHOSTTY_API void ghostty_surface_set_occlusion(ghostty_surface_t, bool);

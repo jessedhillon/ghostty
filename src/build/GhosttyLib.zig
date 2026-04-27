@@ -94,6 +94,14 @@ pub fn initShared(
     });
     _ = try deps.add(lib);
 
+    // libghostty's shared build needs the glad loader symbols resolved within
+    // the library itself so embedders don't have to provide them at runtime.
+    lib.addIncludePath(b.path("vendor/glad/include/"));
+    lib.addCSourceFile(.{
+        .file = b.path("vendor/glad/src/gl.c"),
+        .flags = &.{},
+    });
+
     // On Windows with MSVC, building a DLL requires the full CRT library
     // chain. linkLibC() (called via deps.add) provides msvcrt.lib, but
     // that references symbols in vcruntime.lib and ucrt.lib. Zig's library

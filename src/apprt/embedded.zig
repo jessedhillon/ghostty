@@ -22,6 +22,18 @@ const configpkg = @import("../config.zig");
 const Config = configpkg.Config;
 
 const log = std.log.scoped(.embedded_window);
+threadlocal var last_error_buf: [256:0]u8 = [_:0]u8{0} ** 256;
+threadlocal var last_error_len: usize = 0;
+
+fn setLastError(comptime fmt: []const u8, args: anytype) void {
+    const msg = std.fmt.bufPrintZ(&last_error_buf, fmt, args) catch blk: {
+        const fallback = "error formatting embedded error";
+        @memcpy(last_error_buf[0..fallback.len], fallback);
+        last_error_buf[fallback.len] = 0;
+        break :blk last_error_buf[0..fallback.len :0];
+    };
+    last_error_len = msg.len;
+}
 
 pub const resourcesDir = internal_os.resourcesDir;
 
@@ -343,6 +355,7 @@ pub const App = struct {
 pub const Platform = union(PlatformTag) {
     macos: MacOS,
     ios: IOS,
+    linux: Linux,
 
     // If our build target for libghostty is not darwin then we do
     // not include macos support at all.
@@ -356,6 +369,11 @@ pub const Platform = union(PlatformTag) {
         uiview: objc.Object,
     } else void;
 
+    pub const Linux = if (builtin.target.os.tag == .linux) struct {
+        /// A GTK GL widget pointer that owns the current OpenGL context.
+        gtk_widget: *anyopaque,
+    } else void;
+
     // The C ABI compatible version of this union. The tag is expected
     // to be stored elsewhere.
     pub const C = extern union {
@@ -365,6 +383,10 @@ pub const Platform = union(PlatformTag) {
 
         ios: extern struct {
             uiview: ?*anyopaque,
+        },
+
+        gtk: extern struct {
+            gtk_widget: ?*anyopaque,
         },
     };
 
@@ -385,6 +407,13 @@ pub const Platform = union(PlatformTag) {
                     break :ios error.UIViewMustBeSet);
                 break :ios .{ .ios = .{ .uiview = uiview } };
             } else error.UnsupportedPlatform,
+
+            .linux => if (Linux != void) linux: {
+                const config = c_platform.gtk;
+                const gtk_widget = config.gtk_widget orelse
+                    break :linux error.GtkWidgetMustBeSet;
+                break :linux .{ .linux = .{ .gtk_widget = gtk_widget } };
+            } else error.UnsupportedPlatform,
         };
     }
 };
@@ -395,6 +424,7 @@ pub const PlatformTag = enum(c_int) {
 
     macos = 1,
     ios = 2,
+    linux = 3,
 };
 
 pub const EnvVar = extern struct {
@@ -406,9 +436,13 @@ pub const EnvVar = extern struct {
 };
 
 pub const Surface = struct {
+    pub const OpenGLProc = *const fn () callconv(.c) void;
+    pub const OpenGLLoader = *const fn ([*:0]const u8) callconv(.c) ?OpenGLProc;
+
     app: *App,
     platform: Platform,
     userdata: ?*anyopaque = null,
+    opengl_loader: ?OpenGLLoader = null,
     core_surface: CoreSurface,
     content_scale: apprt.ContentScale,
     size: apprt.SurfaceSize,
@@ -428,6 +462,10 @@ pub const Surface = struct {
 
         /// Userdata passed to some of the callbacks.
         userdata: ?*anyopaque = null,
+
+        /// OpenGL procedure loader used when initializing the renderer
+        /// against the host application's current context.
+        opengl_loader: ?OpenGLLoader = null,
 
         /// The scale factor of the screen.
         scale_factor: f64 = 1,
@@ -467,6 +505,7 @@ pub const Surface = struct {
             .app = app,
             .platform = try .init(opts.platform_tag, opts.platform),
             .userdata = opts.userdata,
+            .opengl_loader = opts.opengl_loader,
             .core_surface = undefined,
             .content_scale = .{
                 .x = @floatCast(opts.scale_factor),
@@ -764,6 +803,7 @@ pub const Surface = struct {
             log.err("error in refresh callback err={}", .{err});
             return;
         };
+        self.app.wakeup();
     }
 
     pub fn draw(self: *Surface) void {
@@ -1399,15 +1439,23 @@ pub const CAPI = struct {
         config: *const Config,
     ) ?*App {
         return app_new_(opts, config) catch |err| {
+            setLastError("ghostty_app_new: {s}", .{@errorName(err)});
             log.err("error initializing app err={}", .{err});
             return null;
         };
+    }
+
+    export fn ghostty_last_error() [*:0]const u8 {
+        if (last_error_len == 0) return "";
+        return &last_error_buf;
     }
 
     fn app_new_(
         opts: *const apprt.runtime.App.Options,
         config: *const Config,
     ) !*App {
+        last_error_len = 0;
+        last_error_buf[0] = 0;
         const core_app = try CoreApp.create(global.alloc);
         errdefer core_app.destroy();
 
@@ -1543,6 +1591,7 @@ pub const CAPI = struct {
         opts: *const apprt.Surface.Options,
     ) ?*Surface {
         return surface_new_(app, opts) catch |err| {
+            setLastError("ghostty_surface_new: {s}", .{@errorName(err)});
             log.err("error initializing surface err={}", .{err});
             return null;
         };
@@ -1552,6 +1601,8 @@ pub const CAPI = struct {
         app: *App,
         opts: *const apprt.Surface.Options,
     ) !*Surface {
+        last_error_len = 0;
+        last_error_buf[0] = 0;
         return try app.newSurface(opts.*);
     }
 
@@ -1688,6 +1739,40 @@ pub const CAPI = struct {
     /// call as soon as possible (NOW if possible).
     export fn ghostty_surface_draw(surface: *Surface) void {
         surface.draw();
+    }
+
+    /// Notify the renderer that the display context has been realized.
+    export fn ghostty_surface_display_realized(surface: *Surface) void {
+        if (surface.opengl_loader) |loader| {
+            const opengl = @import("../renderer/OpenGL.zig");
+            opengl.prepareContext(loader) catch |err| {
+                log.warn("failed to prepare GL context in display_realized err={}", .{err});
+            };
+        }
+        surface.core_surface.renderer.displayRealized() catch |err| {
+            log.warn("failed to notify display realization err={}", .{err});
+        };
+    }
+
+    /// Initialize OpenGL function pointers while the host context is current.
+    export fn ghostty_surface_init_opengl(surface: *Surface) void {
+        const opengl = @import("../renderer/OpenGL.zig");
+        if (surface.opengl_loader) |loader| {
+            opengl.prepareContext(loader) catch |err| {
+                log.warn("failed to prepare GL context err={}", .{err});
+            };
+            return;
+        }
+        opengl.prepareContext(null) catch |err| {
+            log.warn("failed to prepare GL context err={}", .{err});
+        };
+    }
+
+    /// Draw a frame immediately using the caller's current GL context.
+    export fn ghostty_surface_draw_frame(surface: *Surface) void {
+        surface.core_surface.renderer.drawFrame(true) catch |err| {
+            log.warn("failed to draw frame err={}", .{err});
+        };
     }
 
     /// Update the size of a surface. This will trigger resize notifications

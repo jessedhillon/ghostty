@@ -106,8 +106,12 @@
         libghostty-vt-debug = pkgs.callPackage ./nix/libghostty-vt.nix (mkPkgArgs "Debug");
         libghostty-vt-releasesafe = pkgs.callPackage ./nix/libghostty-vt.nix (mkPkgArgs "ReleaseSafe");
         libghostty-vt-releasefast = pkgs.callPackage ./nix/libghostty-vt.nix (mkPkgArgs "ReleaseFast");
+        libghostty-debug = pkgs.callPackage ./nix/libghostty.nix (mkPkgArgs "Debug");
+        libghostty-releasesafe = pkgs.callPackage ./nix/libghostty.nix (mkPkgArgs "ReleaseSafe");
+        libghostty-releasefast = pkgs.callPackage ./nix/libghostty.nix (mkPkgArgs "ReleaseFast");
 
         libghostty-vt = libghostty-vt-releasefast;
+        libghostty = libghostty-releasefast;
       });
 
     formatter = forAllPlatforms (pkgs: pkgs.alejandra);
